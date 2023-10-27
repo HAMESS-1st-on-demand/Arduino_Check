@@ -80,7 +80,6 @@ void loop() {
         controlFND(priority); // FND 제어
         sevseg.setSegments(segs);
         sevseg.refreshDisplay();
-
         open();
       }
       //선루프가 완전히 열려있다면
@@ -95,7 +94,6 @@ void loop() {
         controlFND(priority); // FND 제어
         sevseg.setSegments(segs);
         sevseg.refreshDisplay();
-
         close();
       }
 
@@ -221,9 +219,7 @@ void controlFND(int currentPriority){
 // 이하 통신 함수
 // **************
 
-
 void serialEvent(){ // 메세지가 들어와야 움직입니다
-
   // 들어온 명령과 현재 아두이노의 상태를 비교해서 명령을 따르거나 거부합니다.
   // 명령을 따를 경우 모터를 움직이고, FND를 조작하고, 답장용 메시지를 만들어 답장을 합니다.
   // 명령을 거부할 경우 답장용 메시지를 만들어 답장을 합니다.
