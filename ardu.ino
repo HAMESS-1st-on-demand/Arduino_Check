@@ -4,31 +4,27 @@
 #define false 0
 #define true 1
 
-// 구동파트 전역변수
 Servo myServo; // Servo 객체 생성
 SevSeg sevseg; // seven segment 객체 생성
+uint8_t segs[4]; // 4bit 7-segment에 들어갈 데이터
 
-const byte closed_btn = 12; // 선루프가 완전히 닫혔을 때 눌리는 버튼
-const byte opened_btn = 13; // 선루프가 완전히 열렸을 때 눌리는 버튼
+const byte closed_btn = 13; // 선루프가 완전히 닫혔을 때 눌리는 버튼
+const byte opened_btn = 12; // 선루프가 완전히 열렸을 때 눌리는 버튼
 const byte close_btn = 10; // 닫힘 버튼
 const byte open_btn = 11; // 열림 버튼
 const byte obstacle_btn = 2; // 손끼임 측정 버튼
-volatile int direction = 1; // 선루프 방향, 1이면 열림 방향, 0이면 닫힘 방향
-volatile int isCollision = 0; // 손끼임 감지 상태, 1이면 감지, 다 열고서도 3초 동안 true로 유지.
 volatile int open_LED = 7; // 모터가 열리는 방향으로 돌면 켜지는 LED
 volatile int close_LED = 6; // 모터가 닫히는 방향으로 돌면 켜지는 LED
 
-// 통신파트 전역변수
-//unsigned long time_previous, time_current; @todo 살려야함
-bool emergency = false; // 손끼임 방지 후 3초 동안 true인 flag
-//@todo 현재 선루프 위치를 항상 알아서 업데이트 해야함
-bool isOpened = false;
-bool isMoving = false;
+volatile int direction = 1; // 선루프 방향, 1이면 열림 방향, 0이면 닫힘 방향
+volatile int isCollision = 0; // 손끼임 감지 상태, 1이면 감지, 다 열고서도 3초 동안 true로 유지.
+bool isOpened = false, isMoving = false;
+unsigned char priority = 0;
+unsigned long collisionTime, currentTime;
 
 void setup() {
   // 모터 구동 setup
   myServo.attach(9); // 9번핀에 서보모터 장착
-
   //버튼들 핀 설정, 풀업저항이 걸려있음
   pinMode(closed_btn, INPUT_PULLUP);
   pinMode(opened_btn, INPUT_PULLUP);
@@ -38,42 +34,40 @@ void setup() {
   pinMode(open_LED, OUTPUT);
   pinMode(close_LED, OUTPUT);
 
-  //인터럽트 설정, 손끼임 방지버튼을 인터럽트로 처리
-  //손끼임 감지버튼이 HIGH -> LOW 되면 호출
+  //손끼임 방지버튼을 인터럽트로 처리, 손끼임 감지버튼이 HIGH -> LOW 되면 호출
   attachInterrupt(digitalPinToInterrupt(obstacle_btn), gotObstacle, FALLING);
 
   //FND setup
   byte numDigits = 4; 
   byte digitPins[] = {8, 3, 1, A5}; // 4자리를 선정하는 비트
   byte segmentPins[] = {5, 0, A3, A1, A0, 4, A4, A2}; //각 자리의 led 하나씩을 선정하는 비트
-
   sevseg.begin(COMMON_CATHODE, numDigits, digitPins, segmentPins); 
   sevseg.setBrightness(90);
   controlFND(-1); // blank 
+  sevseg.setSegments(segs);
   sevseg.refreshDisplay(); // controlFND() 후 refreshDisplay()를 실행해야 문자가 표시됨
 
-  // 통신 setup
-  //time_previous = millis();
   Serial.begin(9600, SERIAL_8N1); // baudrate 9600, data 8bit, 정지비트 1bit.
 }
 
 void loop() {
 
-  //손끼임이 발생했다면
+  // isOpened 제어, opened_btn 눌려있으면 열렸다 처리
+  if (digitalRead(opened_btn) == LOW) isOpened = true;
+  else if (digitalRead(closed_btn) == LOW) isOpened = false;
+
+  // 10초 내에 손끼임이 발생했었다면
   if(isCollision == 1){
 
     //선루프가 완전히 닫힐때까지(opened_btn이 눌릴때까지)
     //열리는 방향으로 선루프 제어
     while(digitalRead(opened_btn) == HIGH) open();
 
-    //선루프가 완전히 개방되면 손끼임 상태를 0으로 바꿈
-    isCollision = 0;
-    // @todo
-    // 아래 millis() 관리 코드 사용해 손 끼임 상태 3초간 유지하게 변경예정
-    // time_current = millis();
-    // if (time_current >= time_previous + 1000) {
-    //   time_previous = time_current;
-    // }
+    //손끼임 발생 후 10초 내에는 닫히지 않음 
+    currentTime = millis();
+    if (currentTime >= collisionTime + 10000) {
+      isCollision = 0;
+    }
   }
 
   //손끼임이 발생하지 않았다면
@@ -81,7 +75,14 @@ void loop() {
     //사용자가 열림버튼을 눌렀다면
     if(digitalRead(open_btn) == LOW) {
       //선루프가 완전히 열려있지 않다면
-      if(digitalRead(opened_btn) == HIGH) open();
+      if(digitalRead(opened_btn) == HIGH) {
+        priority = 14 << 3; 
+        controlFND(priority); // FND 제어
+        sevseg.setSegments(segs);
+        sevseg.refreshDisplay();
+
+        open();
+      }
       //선루프가 완전히 열려있다면
       else stop();
     }
@@ -89,7 +90,14 @@ void loop() {
     //사용자가 닫힘버튼을 눌렀다면
     if(digitalRead(close_btn) == LOW){
       //선루프가 완전히 닫혀있지 않다면
-      if(digitalRead(closed_btn) == HIGH) close();
+      if(digitalRead(closed_btn) == HIGH) {
+        priority = 14 << 3;
+        controlFND(priority); // FND 제어
+        sevseg.setSegments(segs);
+        sevseg.refreshDisplay();
+
+        close();
+      }
 
       //선루프가 완전히 닫혀있다면
       else stop();
@@ -97,7 +105,8 @@ void loop() {
 
     //사용자가 아무버튼도 누르지 않는다면 모터 정지
     else if(digitalRead(open_btn) == HIGH && digitalRead(close_btn) == HIGH) stop();
-    // @todo 사용자가 두 버튼을 다 눌러도 모터 정지
+    // 사용자가 두 버튼을 다 눌러도 모터 정지
+    else if(digitalRead(open_btn) == LOW && digitalRead(close_btn) == LOW) stop();
   }
 }
 
@@ -107,14 +116,22 @@ void loop() {
 
 // 인터럽트가 발생하면 실행되는 함수
 void gotObstacle() {
+  priority = 15 << 3;
+  controlFND(priority); // FND 제어
+  sevseg.setSegments(segs);
+  sevseg.refreshDisplay(); 
+
   myServo.write(90); // 서보모터를 중지
+  isMoving = false;
   isCollision = 1; // 손끼임 상태를 1로 바꿈
+  collisionTime = millis(); // 부딪친 시간 확인
 }
 
 // 선루프를 여는 함수
 void open() {
   direction = 1;
   myServo.write(90 + (20 * direction));
+  isMoving = true;
 
   //열리는 led를 키고 닫히는 led를 끔
   digitalWrite(open_LED, HIGH);
@@ -126,6 +143,7 @@ void close() {
   //닫힘방향으로 선루프를 닫음
   direction = -1;
   myServo.write(90 + (20 * direction));
+  isMoving = true;
 
   //열리는 led를 끄고 닫히는 led를 켬
   digitalWrite(open_LED, LOW);
@@ -134,47 +152,67 @@ void close() {
 
 //선루프를 정지하는 함수
 void stop() {
-  myServo.write(90); //모터 정지
+  myServo.write(90); // 모터 정지
+  isMoving = false;
   digitalWrite(open_LED, LOW);
   digitalWrite(close_LED, LOW);
 }
 
-void controlFND(int state){
-  //state를 외부에서 받아서 그에 맞는 led를 표시해주는 함수
-  // @todo 모든 경우의 수 채우기
-  // state == 15 << 3 : 손끼임 (obstacle)
-  // state == 14 << 3 : 사용자 입력 (user)
-  // state == 13 << 3 : 침수 (flooding)
-  // state == 12 << 3 : 비 (rain)
-  // state == 11 << 3 : 미세먼지 (dust)
-  // state == 10 << 3 : 온도 (닫아)
-  // state == 9 << 3 : 온도 (열어)
-  // state == 8 << 3 : user preference
+void controlFND(int currentPriority){
+  //현재 우선순위 그에 맞는 led를 표시해주는 함수
+  // 15 << 3 : 손끼임 (obstacle)
+  // 14 << 3 : 사용자 입력 (user)
+  // 13 << 3 : 침수 (flooding)
+  // 12 << 3 : 비 (rain)
+  // 11 << 3 : 미세먼지 (dust)
+  // 10 << 3 : 온도 (닫아)
+  // 9 << 3 : 온도 (열어)
 
-  switch (state) {
-    case 15 << 3:
-      sevseg.setChars("obs");
+  switch (currentPriority) {
+    case 15 << 3: //obs
+      segs[0] = 92;
+      segs[1] = 124;
+      segs[2] = 109;
+      segs[3] = 0;
       break;
-    case 14 << 3:
-      sevseg.setChars("user");
+    case 14 << 3: //btn
+      segs[0] = 124;
+      segs[1] = 120;
+      segs[2] = 84;
+      segs[3] = 0;
       break;
-    case 13 << 3:
-      sevseg.setChars("flod");
+    case 13 << 3: // flod
+      segs[0] = 113;
+      segs[1] = 56;
+      segs[2] = 92;
+      segs[3] = 94;
       break;
-    case 12 << 3:
-      sevseg.setChars("rain");
+    case 12 << 3: // rain
+      segs[0] = 80;
+      segs[1] = 119;
+      segs[2] = 6;
+      segs[3] = 84;
       break;
-    case 11 << 3:
-      sevseg.setChars("dust");
+    case 11 << 3: // dust
+      segs[0] = 94;
+      segs[1] = 28;
+      segs[2] = 109;
+      segs[3] = 120;
       break;
-  // @todo
-  // state == 10 << 3 : 온도 (닫아)
-  // state == 9 << 3 : 온도 (열어)
-    case 8 << 3:
-      sevseg.setChars("pref");
+    case 10 << 3: // Cool
+      segs[0] = 57;
+      segs[1] = 92;
+      segs[2] = 92;
+      segs[3] = 56;
+      break;
+    case 9 << 3: // Hot
+      segs[0] = 118;
+      segs[1] = 92;
+      segs[2] = 120;
+      segs[3] = 0;
       break;
     default:
-      sevseg.blank();
+      segs[0] = segs[1] = segs[2] = segs[3] = 0;
       break;
   }
 }
@@ -183,72 +221,56 @@ void controlFND(int state){
 // 이하 통신 함수
 // **************
 
-// 메세지가 들어와야 움직입니다
-// MSB가 1일 때와 0일때 다른 함수를 부릅니다.
-// MSB가 1일 때는 명령을 처리하고,
-// MSB가 0일 때는 현재 상황을 보고합니다.
-void serialEvent(){
-  char received = Serial.read(); // 이건 전역변수로 선언하지 말고 인자 전달하자. 수시로 바뀌니까.
-  if (received & (1 << 7)) func1(received);
-  else report(received);
-}
 
-void func1(char received){
+void serialEvent(){ // 메세지가 들어와야 움직입니다
+
   // 들어온 명령과 현재 아두이노의 상태를 비교해서 명령을 따르거나 거부합니다.
   // 명령을 따를 경우 모터를 움직이고, FND를 조작하고, 답장용 메시지를 만들어 답장을 합니다.
   // 명령을 거부할 경우 답장용 메시지를 만들어 답장을 합니다.
-  
+
+  unsigned char received = Serial.read();
   if (!urgentThan(received) && !sameDir(received)) {
+
+    // 지금부터 수행하겠습니다.
+    reply(received, false, true);
+
+    // FND 제어
+    priority = received & (15 << 3);
+    controlFND(priority);
+    sevseg.setSegments(segs);
+    sevseg.refreshDisplay();
+
+    // 모터 제어
     bool dir = false; // 여는 것이 1, 닫는 것이 0
-    char speed = 15; // 그냥 예시
-    if (received | 1 << 2) dir = true;
-    reply(received, true);
+    if (received & (1 << 2)) dir = true;
     if (dir) open();
     else close();
-    controlFND(received | 15 << 3);
-    sevseg.refreshDisplay();
+
+    // 수행 완료했습니다.
+    reply(received, true, true);
   }
-  else reply(received, false);
+  else reply(received, true, false);
 }
 
-// 명령을 따를 경우 마지막 비트를 1로,
-// 명령을 따르지 않을 경우 마지막 비트를 0으로 바꿔 송신합니다.
-void reply(char received, bool isObey) {
-  char msg;
-  if (isObey) msg = received | 1;
-  else msg = received & ~1;
+// 송신코드
+void reply(unsigned char received, bool isDone, bool isObey) {
+  unsigned char msg = received & 0b01111100;
+  if (isDone) msg |= 1 << 7;
+  if (isOpened) msg |= 1 << 2;
+  if (isMoving) msg |= 1 << 1;
+  if (isObey) msg |= 1;
   Serial.write(msg);
 }
 
-void report(char received) {
-  // 현재 상황을 보고합니다.
-  char msg = getState();
-  Serial.write(msg);
-}
-
-bool urgentThan(char received) {
+bool urgentThan(unsigned char received) {
   // 라즈베리 파이의 명령과 아두이노의 우선순위를 비교합니다.
-  received |= 15 << 3;
-  char priority = getPriority();
-  return priority >= received ? true : false;
+  return priority >= (received & (15 << 3)) ? true : false;
 }
 
-bool sameDir(char received) {
+bool sameDir(unsigned char received) {
   // 열라는 명령 -> isOpened != isMoving 면 무시, 같으면 수행 / 닫으라는 명령이면 반대
   bool order = false;
-  if (1 << 2 && received) order = true;
-  bool target = isOpened == isMoving ? true : false;
-  return order == target ? true : false;
-}
-
-//@todo
-char getPriority() {
-  return 15 << 3;
-}
-
-//@todo
-char getState() {
-  // 액추에이터 제어 코드와 통합 예정인 부분.
-  // 아래는 그냥 예시일 뿐.
-  return 255;
+  if (1 << 2 & received) order = true;
+  bool target = (isOpened == isMoving) ? true : false;
+  return (order == target) ? true : false;
 }
