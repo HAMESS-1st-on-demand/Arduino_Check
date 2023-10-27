@@ -6,6 +6,7 @@
 
 Servo myServo; // Servo 객체 생성
 SevSeg sevseg; // seven segment 객체 생성
+uint8_t segs[4]; // 4bit 7-segment에 들어갈 데이터
 
 const byte closed_btn = 13; // 선루프가 완전히 닫혔을 때 눌리는 버튼
 const byte opened_btn = 12; // 선루프가 완전히 열렸을 때 눌리는 버튼
@@ -40,10 +41,10 @@ void setup() {
   byte numDigits = 4; 
   byte digitPins[] = {8, 3, 1, A5}; // 4자리를 선정하는 비트
   byte segmentPins[] = {5, 0, A3, A1, A0, 4, A4, A2}; //각 자리의 led 하나씩을 선정하는 비트
-
   sevseg.begin(COMMON_CATHODE, numDigits, digitPins, segmentPins); 
   sevseg.setBrightness(90);
   controlFND(-1); // blank 
+  sevseg.setSegments(segs);
   sevseg.refreshDisplay(); // controlFND() 후 refreshDisplay()를 실행해야 문자가 표시됨
 
   Serial.begin(9600, SERIAL_8N1); // baudrate 9600, data 8bit, 정지비트 1bit.
@@ -75,9 +76,10 @@ void loop() {
     if(digitalRead(open_btn) == LOW) {
       //선루프가 완전히 열려있지 않다면
       if(digitalRead(opened_btn) == HIGH) {
-        priority = 14 << 3;
-        controlFND(priority);
-        sevseg.refreshDisplay(); // FND 제어
+        priority = 14 << 3; 
+        controlFND(priority); // FND 제어
+        sevseg.setSegments(segs);
+        sevseg.refreshDisplay();
         open();
       }
       //선루프가 완전히 열려있다면
@@ -89,8 +91,9 @@ void loop() {
       //선루프가 완전히 닫혀있지 않다면
       if(digitalRead(closed_btn) == HIGH) {
         priority = 14 << 3;
-        controlFND(priority);
-        sevseg.refreshDisplay(); // FND 제어
+        controlFND(priority); // FND 제어
+        sevseg.setSegments(segs);
+        sevseg.refreshDisplay();
         close();
       }
 
@@ -112,8 +115,9 @@ void loop() {
 // 인터럽트가 발생하면 실행되는 함수
 void gotObstacle() {
   priority = 15 << 3;
-  controlFND(priority);
-  sevseg.refreshDisplay(); // FND 제어
+  controlFND(priority); // FND 제어
+  sevseg.setSegments(segs);
+  sevseg.refreshDisplay(); 
 
   myServo.write(90); // 서보모터를 중지
   isMoving = false;
@@ -146,7 +150,7 @@ void close() {
 
 //선루프를 정지하는 함수
 void stop() {
-  myServo.write(90); //모터 정지
+  myServo.write(90); // 모터 정지
   isMoving = false;
   digitalWrite(open_LED, LOW);
   digitalWrite(close_LED, LOW);
@@ -163,29 +167,50 @@ void controlFND(int currentPriority){
   // 9 << 3 : 온도 (열어)
 
   switch (currentPriority) {
-    case 15 << 3:
-      sevseg.setChars("obs");
+    case 15 << 3: //obs
+      segs[0] = 92;
+      segs[1] = 124;
+      segs[2] = 109;
+      segs[3] = 0;
       break;
-    case 14 << 3:
-      sevseg.setChars("btn");
+    case 14 << 3: //btn
+      segs[0] = 124;
+      segs[1] = 120;
+      segs[2] = 84;
+      segs[3] = 0;
       break;
-    case 13 << 3:
-      sevseg.setChars("flod");
+    case 13 << 3: // flod
+      segs[0] = 113;
+      segs[1] = 56;
+      segs[2] = 92;
+      segs[3] = 94;
       break;
-    case 12 << 3:
-      sevseg.setChars("rain");
+    case 12 << 3: // rain
+      segs[0] = 80;
+      segs[1] = 119;
+      segs[2] = 6;
+      segs[3] = 84;
       break;
-    case 11 << 3:
-      sevseg.setChars("dust");
+    case 11 << 3: // dust
+      segs[0] = 94;
+      segs[1] = 28;
+      segs[2] = 109;
+      segs[3] = 120;
       break;
-    case 10 << 3:
-      sevseg.setChars("Cool");
+    case 10 << 3: // Cool
+      segs[0] = 57;
+      segs[1] = 92;
+      segs[2] = 92;
+      segs[3] = 56;
       break;
-    case 9 << 3:
-      sevseg.setChars("Hot");
+    case 9 << 3: // Hot
+      segs[0] = 118;
+      segs[1] = 92;
+      segs[2] = 120;
+      segs[3] = 0;
       break;
     default:
-      sevseg.blank();
+      segs[0] = segs[1] = segs[2] = segs[3] = 0;
       break;
   }
 }
@@ -194,62 +219,54 @@ void controlFND(int currentPriority){
 // 이하 통신 함수
 // **************
 
-// 메세지가 들어와야 움직입니다
-// MSB가 1일 때와 0일때 다른 함수를 부릅니다.
-// MSB가 1일 때는 명령을 처리하고,
-// MSB가 0일 때는 현재 상황을 보고합니다.
-void serialEvent(){
-  unsigned char received = Serial.read(); // 이건 전역변수로 선언하지 말고 인자 전달하자. 수시로 바뀌니까.
-  if (received | (1 << 7)) report();
-  else examine(received);
-}
-
-void examine(unsigned char received){
+void serialEvent(){ // 메세지가 들어와야 움직입니다
   // 들어온 명령과 현재 아두이노의 상태를 비교해서 명령을 따르거나 거부합니다.
   // 명령을 따를 경우 모터를 움직이고, FND를 조작하고, 답장용 메시지를 만들어 답장을 합니다.
   // 명령을 거부할 경우 답장용 메시지를 만들어 답장을 합니다.
-  
+
+  unsigned char received = Serial.read();
   if (!urgentThan(received) && !sameDir(received)) {
-    priority = received | (15 << 3);
+
+    // 지금부터 수행하겠습니다.
+    reply(received, false, true);
+
+    // FND 제어
+    priority = received & (15 << 3);
+    controlFND(priority);
+    sevseg.setSegments(segs);
+    sevseg.refreshDisplay();
+
+    // 모터 제어
     bool dir = false; // 여는 것이 1, 닫는 것이 0
-    unsigned char speed = 15; // 그냥 예시
-    if (received | 1 << 2) dir = true;
-    reply(received, true);
+    if (received & (1 << 2)) dir = true;
     if (dir) open();
     else close();
-    controlFND(priority);
-    sevseg.refreshDisplay();
+
+    // 수행 완료했습니다.
+    reply(received, true, true);
   }
-  else reply(received, false);
+  else reply(received, true, false);
 }
 
-// 명령을 따를 경우 마지막 비트를 1로,
-// 명령을 따르지 않을 경우 마지막 비트를 0으로 바꿔 송신합니다.
-void reply(unsigned char received, bool isObey) {
-  unsigned char msg = priority;
+// 송신코드
+void reply(unsigned char received, bool isDone, bool isObey) {
+  unsigned char msg = received & 0b01111100;
+  if (isDone) msg |= 1 << 7;
   if (isOpened) msg |= 1 << 2;
   if (isMoving) msg |= 1 << 1;
   if (isObey) msg |= 1;
   Serial.write(msg);
 }
 
-void report() {
-  // 현재 상황을 보고합니다.
-  unsigned char msg = priority | (1 << 7);
-  if (isOpened) msg |= 1 << 2;
-  if (isMoving) msg |= 1 << 1;
-  Serial.write(msg);
-}
-
 bool urgentThan(unsigned char received) {
   // 라즈베리 파이의 명령과 아두이노의 우선순위를 비교합니다.
-  return priority >= (received | (15 << 3)) ? true : false;
+  return priority >= (received & (15 << 3)) ? true : false;
 }
 
 bool sameDir(unsigned char received) {
   // 열라는 명령 -> isOpened != isMoving 면 무시, 같으면 수행 / 닫으라는 명령이면 반대
   bool order = false;
-  if (1 << 2 && received) order = true;
-  bool target = isOpened == isMoving ? true : false;
-  return order == target ? true : false;
+  if (1 << 2 & received) order = true;
+  bool target = (isOpened == isMoving) ? true : false;
+  return (order == target) ? true : false;
 }
