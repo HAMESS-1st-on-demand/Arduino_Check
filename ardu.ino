@@ -250,7 +250,7 @@ void serialEvent(){ // 메세지가 들어와야 움직입니다
 
 // 송신코드
 void reply(unsigned char received, bool isDone, bool isObey) {
-  unsigned char msg = received & 0b01111100;
+  unsigned char msg = received;
   if (isDone) msg |= 1 << 7;
   if (isOpened) msg |= 1 << 2;
   if (isMoving) msg |= 1 << 1;
