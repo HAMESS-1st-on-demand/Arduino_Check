@@ -18,8 +18,9 @@ volatile int close_LED = 6; // 모터가 닫히는 방향으로 돌면 켜지는
 
 volatile int direction = 1; // 선루프 방향, 1이면 열림 방향, 0이면 닫힘 방향
 volatile int isCollision = 0; // 손끼임 감지 상태, 1이면 감지, 다 열고서도 3초 동안 true로 유지.
-bool isOpened = false, isMoving = false;
+bool isOpened = false, isMoving = false, letsOpen = false, letsClose = false;
 unsigned char priority = 0;
+unsigned char inProgress = 0; // 수행중인 움직임
 unsigned long collisionTime, currentTime;
 
 void setup() {
@@ -52,6 +53,17 @@ void setup() {
 
 void loop() {
 
+  // 자석스위치 끝에 닿으면 동작 종료 및 동작 종료 메세지 발송
+  if (letsOpen && digitalRead(opened_btn) == LOW) {
+      letsOpen = false;
+      reply(inProgress, true, true);
+      inProgress = 0;
+  } else if (letsClose && digitalRead(closed_btn) == LOW) {
+      letsClose = false;
+      reply(inProgress, true, true);
+      inProgress = 0;
+  }
+    
   // isOpened 제어, opened_btn 눌려있으면 열렸다 처리
   if (digitalRead(opened_btn) == LOW) isOpened = true;
   else if (digitalRead(closed_btn) == LOW) isOpened = false;
@@ -72,8 +84,10 @@ void loop() {
 
   //손끼임이 발생하지 않았다면
   else {
-    //사용자가 열림버튼을 눌렀다면
-    if(digitalRead(open_btn) == LOW) {
+    // 사용자가 두 버튼을 다 누르면 모터 정지
+    if(digitalRead(open_btn) == LOW && digitalRead(close_btn) == LOW) stop();
+    //사용자가 열림버튼만 눌렀거나 라즈베리 파이 지시로 열고 있는 중이라면
+    else if(digitalRead(open_btn) == LOW || letsOpen) {
       //선루프가 완전히 열려있지 않다면
       if(digitalRead(opened_btn) == HIGH) {
         priority = 14 << 3; 
@@ -86,8 +100,8 @@ void loop() {
       else stop();
     }
 
-    //사용자가 닫힘버튼을 눌렀다면
-    if(digitalRead(close_btn) == LOW){
+    //사용자가 닫힘버튼만 눌렀거나 라즈베리 파이 지시로 닫고 있는 중이라면
+    else if(digitalRead(close_btn) == LOW || letsClose){
       //선루프가 완전히 닫혀있지 않다면
       if(digitalRead(closed_btn) == HIGH) {
         priority = 14 << 3;
@@ -103,8 +117,6 @@ void loop() {
 
     //사용자가 아무버튼도 누르지 않는다면 모터 정지
     else if(digitalRead(open_btn) == HIGH && digitalRead(close_btn) == HIGH) stop();
-    // 사용자가 두 버튼을 다 눌러도 모터 정지
-    else if(digitalRead(open_btn) == LOW && digitalRead(close_btn) == LOW) stop();
   }
 }
 
@@ -226,8 +238,8 @@ void serialEvent(){ // 메세지가 들어와야 움직입니다
 
   unsigned char received = Serial.read();
   if (!urgentThan(received) && !sameDir(received)) {
-
-    // 지금부터 수행하겠습니다.
+    inProgress = received;
+    // 동작 개시를 알리는 메세지 발송
     reply(received, false, true);
 
     // FND 제어
@@ -239,11 +251,9 @@ void serialEvent(){ // 메세지가 들어와야 움직입니다
     // 모터 제어
     bool dir = false; // 여는 것이 1, 닫는 것이 0
     if (received & (1 << 2)) dir = true;
-    if (dir) open();
-    else close();
+    if (dir) letsOpen = true;
+    else letsClose = true;
 
-    // 수행 완료했습니다.
-    reply(received, true, true);
   }
   else reply(received, true, false);
 }
