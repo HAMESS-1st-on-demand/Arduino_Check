@@ -53,6 +53,10 @@ void setup() {
 
 void loop() {
 
+    controlFND(priority);
+    sevseg.setSegments(segs);
+    sevseg.refreshDisplay();
+
   // 자석스위치 끝에 닿으면 동작 종료 및 동작 종료 메세지 발송
   if (letsOpen && digitalRead(opened_btn) == LOW) {
       letsOpen = false;
@@ -244,9 +248,6 @@ void serialEvent(){ // 메세지가 들어와야 움직입니다
 
     // FND 제어
     priority = received & (15 << 3);
-    controlFND(priority);
-    sevseg.setSegments(segs);
-    sevseg.refreshDisplay();
 
     // 모터 제어
     bool dir = false; // 여는 것이 1, 닫는 것이 0
